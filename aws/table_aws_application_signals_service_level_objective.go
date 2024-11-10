@@ -2,12 +2,12 @@ package aws
 
 import (
 	"context"
-	"github.com/aws/aws-sdk-go-v2/service/applicationsignals"
-	applicationsignalsv1 "github.com/aws/aws-sdk-go/service/applicationsignals"
-	"strings"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/applicationsignals"
 	"github.com/aws/aws-sdk-go-v2/service/applicationsignals/types"
+	cloudwatchlogsv1 "github.com/aws/aws-sdk-go/service/cloudwatchlogs"
+	"strings"
+	"time"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -32,8 +32,12 @@ func tableAwsApplicationSignalsServiceLevelObjective(_ context.Context) *plugin.
 				Func: getApplicationSignalsServiceLevelObjective,
 				Tags: map[string]string{"service": "application-signals", "action": "GetApplicationSignalsServiceLevelObjective"},
 			},
+			{
+				Func: getApplicationSignalsBudget,
+				Tags: map[string]string{"service": "application-signals", "action": "GetApplicationSignalsBudget"},
+			},
 		},
-		GetMatrixItemFunc: SupportedRegionMatrix(applicationsignalsv1.EndpointsID),
+		GetMatrixItemFunc: SupportedRegionMatrix(cloudwatchlogsv1.EndpointsID),
 		Columns: awsRegionalColumns([]*plugin.Column{
 			{
 				Name:        "arn",
@@ -64,6 +68,12 @@ func tableAwsApplicationSignalsServiceLevelObjective(_ context.Context) *plugin.
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     getApplicationSignalsServiceLevelObjective,
 			},
+			{
+				Name:        "budget",
+				Description: "The budget of the service level objective.",
+				Type:        proto.ColumnType_JSON,
+				Hydrate:     getApplicationSignalsBudget,
+			},
 			//// Steampipe Standard Columns
 			//{
 			//	Name:        "tags",
@@ -85,6 +95,8 @@ func tableAwsApplicationSignalsServiceLevelObjective(_ context.Context) *plugin.
 
 func listApplicationSignalsServiceLevelObjectives(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
 	svc, err := ApplicationSignalsClient(ctx, d)
+
+	plugin.Logger(ctx).Debug("aws_application_signals_service_level_objective.listApplicationSignalsServiceLevelObjectives", "svc", svc, "err", err)
 
 	// Unsupported region check
 	if svc == nil {
@@ -139,6 +151,54 @@ func listApplicationSignalsServiceLevelObjectives(ctx context.Context, d *plugin
 
 //// HYDRATE FUNCTIONS
 
+func getApplicationSignalsBudget(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
+
+	arn := ""
+
+	if h.Item != nil {
+		data := h.Item.(types.ServiceLevelObjectiveSummary)
+		arn = *data.Arn
+	} else {
+		arn = d.EqualsQualString("arn")
+	}
+
+	// check if name is empty
+	if strings.TrimSpace(arn) == "" {
+		return nil, nil
+	}
+
+	// Get client
+	svc, err := ApplicationSignalsClient(ctx, d)
+
+	// Unsupported region check
+	if svc == nil {
+		return nil, nil
+	}
+
+	// Unsupported region check
+	if svc == nil {
+		return nil, nil
+	}
+	if err != nil {
+		plugin.Logger(ctx).Error("aws_application_signals_service_level_objective.getApplicationSignalsBudget", "client_error", err)
+		return nil, err
+	}
+
+	timestamp := time.Now().Add(-10 * time.Hour)
+	params := &applicationsignals.BatchGetServiceLevelObjectiveBudgetReportInput{
+		SloIds:    []string{arn},
+		Timestamp: &timestamp,
+	}
+
+	item, err := svc.BatchGetServiceLevelObjectiveBudgetReport(ctx, params)
+	if err != nil {
+		plugin.Logger(ctx).Error("aws_application_signals_service_level_objective.getApplicationSignalsBudget", "api_error", err)
+		return nil, err
+	}
+
+	return MyType{Budget: item.Reports[0]}, nil
+}
+
 func getApplicationSignalsServiceLevelObjective(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	arn := ""
 
@@ -182,4 +242,8 @@ func getApplicationSignalsServiceLevelObjective(ctx context.Context, d *plugin.Q
 	}
 
 	return item.Slo, nil
+}
+
+type MyType struct {
+	Budget types.ServiceLevelObjectiveBudgetReport
 }
